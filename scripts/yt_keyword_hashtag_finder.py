@@ -74,9 +74,7 @@ def analyze_keyword(keyword: str, api_key: str, max_results: int = 15) -> dict:
     details = get_video_details(video_ids, api_key)
     hashtag_views = {}
     tag_counter = Counter()
-    total_views = 0
     for v in details:
-        total_views += v["view_count"]
         seen = set(h.lower() for h in extract_hashtags(v["title"] + " " + v["description"]))
         for h in seen:
             hashtag_views.setdefault(h, []).append(v["view_count"])
@@ -90,9 +88,7 @@ def analyze_keyword(keyword: str, api_key: str, max_results: int = 15) -> dict:
             "total_views": sum(views_list), "max_views": max(views_list),
         })
     hashtag_stats.sort(key=lambda x: -x["total_views"])
-    return {
-        "hashtag_stats": hashtag_stats, "top_hidden_tags": tag_counter.most_common(20)
-    }
+    return {"hashtag_stats": hashtag_stats}
 
 def verify_specific_hashtags(hashtags: list, api_key: str) -> list:
     results = []
@@ -115,13 +111,28 @@ def main():
     parser.add_argument("--max-videos", type=int, default=15)
     parser.add_argument("--csv")
     parser.add_argument("--verify-hashtags-file")
+    parser.add_argument("--suggest-from-file") # Fitur baru
     
     args = parser.parse_args()
     api_key = args.api_key or os.environ.get("YT_API_KEY")
 
     os.makedirs("results", exist_ok=True)
 
-    # Proses Keyword
+    # 1. Fitur Autocomplete
+    if args.suggest_from_file and os.path.exists(args.suggest_from_file):
+        with open(args.suggest_from_file, "r", encoding="utf-8") as f:
+            seeds = [line.strip() for line in f if line.strip()]
+        all_suggestions = []
+        for seed in seeds:
+            print(f"[*] Mencari saran pencarian untuk: '{seed}'")
+            all_suggestions.extend(get_autocomplete_suggestions(seed))
+        
+        with open("results/autocomplete_suggestions.txt", "w", encoding="utf-8") as f:
+            for item in sorted(set(all_suggestions)):
+                f.write(f"{item}\n")
+        print("[✓] Saran pencarian disimpan ke: results/autocomplete_suggestions.txt")
+
+    # 2. Proses Keyword (Analisis Hashtag)
     target_keywords = args.keywords or []
     if args.keywords_file and os.path.exists(args.keywords_file):
         with open(args.keywords_file, "r", encoding="utf-8") as f:
@@ -137,7 +148,7 @@ def main():
                 writer.writerows(data["hashtag_stats"])
             print(f"[✓] Hasil keyword disimpan ke: {output_file}")
 
-    # Proses Hashtag Verifikasi
+    # 3. Proses Hashtag Verifikasi
     if args.verify_hashtags_file and os.path.exists(args.verify_hashtags_file) and api_key:
         with open(args.verify_hashtags_file, "r", encoding="utf-8") as f:
             target_hashtags = [line.strip() for line in f if line.strip()]
