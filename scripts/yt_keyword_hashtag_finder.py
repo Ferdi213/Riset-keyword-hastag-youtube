@@ -123,7 +123,7 @@ def search_top_videos(keyword: str, api_key: str, max_results: int = 15,
     except Exception as e:
         print(f"  [!] Search API error untuk '{keyword}': {e}", file=sys.stderr)
         return []
-    return [item["id"]["videoId"] for item in data.get("items", []) if "videoId" in item.get("id", {})]
+    return [item["id"]["videoId"] for item in data.get("items", []) if "videoId" in item.get("id", {})}
 
 
 def get_video_details(video_ids: list, api_key: str) -> list:
@@ -161,10 +161,6 @@ def extract_hashtags(text: str) -> list:
 def analyze_keyword(keyword: str, api_key: str, max_results: int = 25) -> dict:
     """
     Gabungkan search + detail + hashtag jadi satu ringkasan per keyword.
-    Buat tiap hashtag yang ditemukan, hitung juga rata-rata & total views
-    dari video-video yang memakainya — jadi langsung ketahuan hashtag mana
-    yang dipakai video RAME vs yang dipakai video sepi, tanpa perlu nebak
-    daftar hashtag duluan.
     """
     print(f"[*] Menganalisis video top untuk: '{keyword}'")
     video_ids = search_top_videos(keyword, api_key, max_results=max_results)
@@ -199,255 +195,124 @@ def analyze_keyword(keyword: str, api_key: str, max_results: int = 25) -> dict:
         "video_sample_size": len(details),
         "avg_views": round(total_views / len(details)) if details else 0,
         "hashtag_stats": hashtag_stats,
-        "top_hidden_tags": tag_counter.most_common(15),
-        "top_videos": sorted(details, key=lambda x: -x["view_count"])[:5],
+        "top_hidden_tags": tag_counter.most_common(20)
     }
 
 
 # ---------------------------------------------------------------------------
-# 3) VERIFIKASI HASHTAG REAL — cek apakah hashtag beneran dipakai di video
-#    nyata di YouTube, dan seberapa rame (jumlah video + total/avg views).
-#    Ini yang jawab pertanyaan "hashtag ini beneran ada/rame di YouTube ga".
+# 3) FITUR VERIFIKASI HASHTAG SPESIFIK
 # ---------------------------------------------------------------------------
-def verify_hashtag(hashtag: str, api_key: str, sample_size: int = 25) -> dict:
-    """
-    Search YouTube pakai hashtag sebagai query (persis kayak orang search
-    manual di kolom search), lalu ambil statistik video-video yang muncul.
-    Ini bukti langsung dari data YouTube, bukan tebakan dari artikel SEO.
-    """
-    tag = hashtag.lstrip("#").strip()
-    query = f"#{tag}"
-    print(f"[*] Verifikasi hashtag: {query}")
-
-    params = {
-        "part": "snippet",
-        "q": query,
-        "type": "video",
-        "order": "viewCount",
-        "maxResults": sample_size,
-    }
-    try:
-        search_data = youtube_api_get("search", params, api_key)
-    except Exception as e:
-        print(f"  [!] Gagal cek '{query}': {e}", file=sys.stderr)
-        return {"hashtag": query, "exists": False, "error": str(e)}
-
-    total_results = search_data.get("pageInfo", {}).get("totalResults", 0)
-    video_ids = [item["id"]["videoId"] for item in search_data.get("items", [])
-                 if "videoId" in item.get("id", {})]
-
-    if not video_ids:
-        return {
-            "hashtag": query,
-            "exists": False,
-            "total_results_estimate": total_results,
-            "sample_size": 0,
-            "avg_views": 0,
-            "max_views": 0,
-            "verdict": "TIDAK DITEMUKAN — tidak ada video yang benar-benar pakai hashtag ini",
-        }
-
-    details = get_video_details(video_ids, api_key)
-    # cuma hitung video yang BENERAN menyertakan hashtag itu di title/description
-    # (search YouTube kadang loose-match, jadi kita filter ketat di sini)
-    genuine = [v for v in details if f"#{tag.lower()}" in (v["title"] + v["description"]).lower()]
-
-    views = [v["view_count"] for v in genuine] if genuine else [v["view_count"] for v in details]
-    avg_views = round(sum(views) / len(views)) if views else 0
-    max_views = max(views) if views else 0
-
-    # klasifikasi kasar seberapa "rame"
-    if avg_views >= 100_000:
-        verdict = "RAME — rata-rata views tinggi, kompetisi kemungkinan ketat"
-    elif avg_views >= 10_000:
-        verdict = "CUKUP RAME — volume sedang, peluang masih terbuka"
-    elif avg_views >= 1_000:
-        verdict = "SEPI-SEDANG — kompetisi rendah, cocok buat channel kecil"
-    else:
-        verdict = "SANGAT SEPI — hati-hati, bisa jadi hashtag ini jarang dicari"
-
-    return {
-        "hashtag": query,
-        "exists": True,
-        "genuine_matches": len(genuine),
-        "total_results_estimate": total_results,
-        "sample_size": len(details),
-        "avg_views": avg_views,
-        "max_views": max_views,
-        "top_video_title": max(details, key=lambda x: x["view_count"])["title"] if details else "",
-        "verdict": verdict,
-    }
-
-
-def verify_hashtags(hashtags: list, api_key: str) -> list:
+def verify_specific_hashtags(hashtags: list, api_key: str) -> list:
+    """Memverifikasi hashtag dari config file langsung ke pencarian YouTube."""
     results = []
-    for h in hashtags:
-        results.append(verify_hashtag(h, api_key))
+    for ht in hashtags:
+        clean_ht = ht.replace("#", "")
+        print(f"[*] Memverifikasi performa tren hashtag: #{clean_ht}")
+        params = {
+            "part": "snippet",
+            "q": f"#{clean_ht}",
+            "type": "video",
+            "maxResults": 5,
+        }
+        try:
+            data = youtube_api_get("search", params, api_key)
+            total_results = data.get("pageInfo", {}).get("totalResults", 0)
+            results.append({
+                "hashtag": f"#{clean_ht}",
+                "estimated_reach_score": total_results
+            })
+        except Exception as e:
+            print(f"  [!] Gagal memverifikasi hashtag #{clean_ht}: {e}", file=sys.stderr)
         time.sleep(0.2)
     return results
 
 
-def print_verification_report(results: list):
-    print("\n=== HASIL VERIFIKASI HASHTAG (data real dari YouTube) ===\n")
-    # urutkan dari yang paling rame
-    results_sorted = sorted(results, key=lambda r: r.get("avg_views", 0), reverse=True)
-    for r in results_sorted:
-        print(f"{r['hashtag']}")
-        if not r.get("exists"):
-            print(f"   -> {r.get('verdict', 'TIDAK DITEMUKAN')}")
-            print()
-            continue
-        print(f"   Estimasi total video terkait : {r['total_results_estimate']:,}")
-        print(f"   Video yang genuinely pakai tag di sample: {r['genuine_matches']}/{r['sample_size']}")
-        print(f"   Rata-rata views (sample)     : {r['avg_views']:,}")
-        print(f"   Views tertinggi (sample)     : {r['max_views']:,}")
-        print(f"   Video top pakai tag ini      : {r['top_video_title']}")
-        print(f"   Verdict                      : {r['verdict']}")
-        print()
-
-
 # ---------------------------------------------------------------------------
-# OUTPUT
+# 4) MAIN APPLICATION ENTRYPOINT & EXPORTER
 # ---------------------------------------------------------------------------
-def print_keyword_report(suggestions: list):
-    print("\n=== HASIL RISET KEYWORD (autocomplete) ===")
-    if not suggestions:
-        print("Tidak ada suggestion ditemukan.")
-        return
-    for i, kw in enumerate(suggestions, 1):
-        print(f"{i:>3}. {kw}")
-
-
-def print_hashtag_report(results: list):
-    print("\n=== HASHTAG YANG DIPAKAI VIDEO TOP (otomatis ditemukan dari keyword) ===")
-    for r in results:
-        print(f"\n--- Keyword: '{r['keyword']}' "
-              f"(sample {r['video_sample_size']} video, avg views {r['avg_views']:,}) ---")
-        print("Hashtag ditemukan, diurutkan dari yang paling rame:")
-        if r["hashtag_stats"]:
-            print(f"   {'HASHTAG':<25}{'DIPAKAI DI':<14}{'AVG VIEWS':<15}{'TOTAL VIEWS':<15}")
-            for h in r["hashtag_stats"]:
-                print(f"   #{h['hashtag']:<24}{h['video_count']} video{'':<7}"
-                      f"{h['avg_views']:>10,}   {h['total_views']:>12,}")
-        else:
-            print("   (tidak ada hashtag terdeteksi di judul/deskripsi video top untuk keyword ini)")
-
-        print("\nTag tersembunyi (metadata) yang paling sering dipakai:")
-        if r["top_hidden_tags"]:
-            for tag, count in r["top_hidden_tags"][:10]:
-                print(f"   {tag}   ({count}x)")
-        else:
-            print("   (tidak ada tag metadata terdeteksi)")
-
-        print("\nVideo top performer buat referensi:")
-        for v in r["top_videos"]:
-            print(f"   [{v['view_count']:,} views] {v['title']}  —  {v['channel']}")
-
-
-def save_csv(results: list, path: str):
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["keyword", "type", "value", "video_count_or_views", "avg_views", "total_views"])
-        for r in results:
-            for h in r["hashtag_stats"]:
-                writer.writerow([r["keyword"], "hashtag", f"#{h['hashtag']}",
-                                  h["video_count"], h["avg_views"], h["total_views"]])
-            for tag, count in r["top_hidden_tags"]:
-                writer.writerow([r["keyword"], "hidden_tag", tag, count, "", ""])
-            for v in r["top_videos"]:
-                writer.writerow([r["keyword"], "top_video", v["title"], v["view_count"], "", ""])
-    print(f"\n[+] Hasil disimpan ke: {path}")
-
-
-def save_verification_csv(results: list, path: str):
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["hashtag", "exists", "avg_views", "max_views",
-                          "total_results_estimate", "genuine_matches", "sample_size", "verdict"])
-        for r in results:
-            writer.writerow([
-                r.get("hashtag"), r.get("exists"), r.get("avg_views", 0), r.get("max_views", 0),
-                r.get("total_results_estimate", 0), r.get("genuine_matches", 0),
-                r.get("sample_size", 0), r.get("verdict", ""),
-            ])
-    print(f"\n[+] Hasil verifikasi disimpan ke: {path}")
-
-
-# ---------------------------------------------------------------------------
-# MAIN
-# ---------------------------------------------------------------------------
-def read_list_file(path: str) -> list:
-    """Baca file txt, satu item per baris. Baris kosong & yang diawali # (komentar) diabaikan."""
-    items = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#"):
-                items.append(line)
-    return items
+def read_lines_from_file(filepath: str) -> list:
+    """Helper untuk membaca kata kunci/hashtag per baris dari folder config/"""
+    if not os.path.exists(filepath):
+        return []
+    with open(filepath, "r", encoding="utf-8") as f:
+        return [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
 
 
 def main():
     parser = argparse.ArgumentParser(description="YouTube Keyword & Hashtag Finder")
-    parser.add_argument("--keywords", nargs="+", default=None,
-                         help="Satu atau lebih seed keyword, mis: --keywords \"resep ayam\" \"tutorial excel\"")
-    parser.add_argument("--keywords-file", default=None,
-                         help="Path file txt berisi satu keyword per baris (buat dipakai di GitHub Actions)")
-    parser.add_argument("--verify-hashtags", nargs="+", default=None,
-                         help="Cek satu-satu apakah hashtag ini beneran ada & rame di YouTube, "
-                              "mis: --verify-hashtags github githubpages webdev (butuh --api-key)")
-    parser.add_argument("--verify-hashtags-file", default=None,
-                         help="Path file txt berisi satu hashtag per baris (buat dipakai di GitHub Actions)")
-    parser.add_argument("--api-key", default=os.environ.get("YT_API_KEY"),
-                         help="YouTube Data API v3 key (opsional, tapi wajib buat analisis hashtag/video)")
-    parser.add_argument("--deep", action="store_true",
-                         help="Perluas pencarian suggestion pakai a-z (lebih banyak hasil, lebih lambat)")
-    parser.add_argument("--max-videos", type=int, default=25,
-                         help="Jumlah video top yang dianalisis per keyword (default 25)")
-    parser.add_argument("--csv", default=None,
-                         help="Path file CSV buat simpan hasil analisis hashtag (butuh --api-key)")
-    args = parser.parse_args()
+    parser.add_argument("--keywords", nargs="+", help="Keyword langsung via terminal")
+    parser.add_argument("--verify-hashtags", nargs="+", help="Hashtag langsung via terminal")
+    parser.add_argument("--api-key", help="YouTube Data API v3 Key")
 
-    # Gabungkan input dari CLI dan dari file (kalau ada)
-    keywords = list(args.keywords) if args.keywords else []
-    if args.keywords_file:
-        keywords += read_list_file(args.keywords_file)
-    keywords = sorted(set(keywords)) if keywords else None
+parser.add_argument("--deep", action="store_true", help="Gunakan mode alphabet soup")
 
-    hashtags = list(args.verify_hashtags) if args.verify_hashtags else []
-    if args.verify_hashtags_file:
-        hashtags += read_list_file(args.verify_hashtags_file)
-    hashtags = sorted(set(hashtags)) if hashtags else None
+args = parser.parse_args()
+api_key = args.api_key or os.environ.get("YT_API_KEY")
 
-    if not keywords and not hashtags:
-        parser.error("Isi minimal salah satu: --keywords/--keywords-file ATAU --verify-hashtags/--verify-hashtags-file")
+# Ambil data input dari file txt di folder config/ (sesuai struktur repositori Anda)
+file_keywords = read_lines_from_file("config/keywords.txt")
+file_hashtags = read_lines_from_file("config/hashtags.txt")
 
-    # Mode verifikasi hashtag (butuh API key, wajib)
-    if hashtags:
-        if not args.api_key:
-            parser.error("--verify-hashtags butuh --api-key (lihat docstring di atas cara dapetinnya, gratis)")
-        v_results = verify_hashtags(hashtags, args.api_key)
-        print_verification_report(v_results)
-        if args.csv:
-            save_verification_csv(v_results, args.csv)
+# Gabungkan input CLI parameter dan isi File TXT
+target_keywords = (args.keywords or []) + file_keywords
+target_hashtags = (args.verify-hashtags or []) + file_hashtags
 
-    if not keywords:
-        return
+os.makedirs("results", exist_ok=True)
 
-    # Tahap 1: keyword suggestion (selalu jalan, gratis)
-    suggestions = expand_keywords(keywords, deep=args.deep)
-    print_keyword_report(suggestions)
+if not target_keywords and not target_hashtags:
+print("[!] Tidak ada kata kunci atau hashtag ditemukan di terminal maupun di folder 'config/'.")
+print("[*] Berjalan dalam mode demo otomatis...")
+target_keywords = ["resep masakan"]
 
-    # Tahap 2: analisis hashtag & video top (kalau ada API key)
-    if args.api_key:
-        results = [analyze_keyword(kw, args.api_key, args.max_videos) for kw in keywords]
-        print_hashtag_report(results)
-        if args.csv:
-            save_csv(results, args.csv)
-    else:
-        print("\n[i] Mau lihat hashtag & video yang lagi trending juga? "
-              "Tambahin --api-key YOUR_KEY (lihat docstring di atas cara dapetinnya, gratis).")
+# JALAN 1: Eksekusi Riset Keyword
+if target_keywords:
+print("\n=== MEMULAI RISET KEYWORD SUGGESTION ===")
+expanded = expand_keywords(target_keywords, deep=args.deep)
 
+with open("results/keyword_suggestions.csv", "w", encoding="utf-8", newline="") as f:
+writer = csv.writer(f)
+writer.writerow(["Keyword Suggestion"])
+for kw in expanded:
+writer.writerow([kw])
+print(f"[✓] Berhasil menyimpan {len(expanded)} ide keyword ke 'results/keyword_suggestions.csv'")
 
-if __name__ == "__main__":
-    main()
+# Jika API Key aktif, lakukan Deep Analysis Kompetitor
+if api_key:
+print("\n=== MEMULAI ANALISIS KOMPETITOR VIA YOUTUBE API ===")
+for kw in target_keywords:
+analysis = analyze_keyword(kw, api_key)
+
+# Simpan analisis hashtag kompetitor
+filename_ht = f"results/analysis_hashtags_{kw.replace(' ', '_')}.csv"
+with open(filename_ht, "w", encoding="utf-8", newline="") as f:
+writer = csv.DictWriter(f, fieldnames=["hashtag", "video_count", "avg_views", "total_views", "max_views"])
+writer.writeheader()
+writer.writerows(analysis["hashtag_stats"])
+
+# Simpan analisis tag tersembunyi kompetitor
+filename_tags = f"results/analysis_tags_{kw.replace(' ', '_')}.csv"
+with open(filename_tags, "w", encoding="utf-8", newline="") as f:
+writer = csv.writer(f)
+writer.writerow(["Tag", "Frequency Count"])
+writer.writerows(analysis["top_hidden_tags"])
+
+print("[✓] Analisis mendalam video kompetitor sukses diekspor ke folder 'results/'.")
+else:
+print("\n[!] Lewati analisis kompetitor karena YT_API_KEY tidak dikonfigurasi.")
+
+# JALAN 2: Eksekusi Verifikasi Daftar Hashtag
+if target_hashtags:
+if not api_key:
+print("\n[!] Fitur verifikasi hashtag membutuhkan API Key untuk bekerja.")
+else:
+print("\n=== MEMULAI VERIFIKASI TREN HASHTAG ===")
+verified_data = verify_specific_hashtags(target_hashtags, api_key)
+with open("results/verified_hashtags.csv", "w", encoding="utf-8", newline="") as f:
+writer = csv.DictWriter(f, fieldnames=["hashtag", "estimated_reach_score"])
+writer.writeheader()
+writer.writerows(verified_data)
+print("[✓] Berhasil memverifikasi tren hashtag ke 'results/verified_hashtags.csv'")
+
+if name == "main":
+main()
+
