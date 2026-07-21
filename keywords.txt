@@ -1,0 +1,7 @@
+# Satu keyword per baris. Baris yang diawali # diabaikan (komentar).
+# Edit file ini kapan aja, workflow bakal otomatis pakai daftar terbaru.
+cara upload foto ke github pages
+cara upload gambar ke github pages
+cara hosting gambar gratis di github
+tutorial github pages untuk pemula
+cara membuat portfolio online gratis github

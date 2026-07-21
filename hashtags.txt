@@ -1,0 +1,10 @@
+# Satu hashtag per baris (tanpa tanda #, script yang nambahin otomatis).
+# Baris yang diawali # diabaikan (komentar).
+github
+githubpages
+tutorialgithub
+webdev
+ngoding
+belajarcoding
+coding
+programming
