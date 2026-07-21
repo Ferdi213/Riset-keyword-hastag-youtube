@@ -9,7 +9,6 @@ import urllib.parse
 import urllib.request
 import json
 from collections import Counter
-from datetime import datetime, timedelta, timezone
 
 HASHTAG_RE = re.compile(r"#(\w+)", re.UNICODE)
 
@@ -73,13 +72,10 @@ def analyze_keyword(keyword: str, api_key: str, max_results: int = 15) -> dict:
     video_ids = search_top_videos(keyword, api_key, max_results=max_results)
     details = get_video_details(video_ids, api_key)
     hashtag_views = {}
-    tag_counter = Counter()
     for v in details:
         seen = set(h.lower() for h in extract_hashtags(v["title"] + " " + v["description"]))
         for h in seen:
             hashtag_views.setdefault(h, []).append(v["view_count"])
-        for t in v["tags"]:
-            tag_counter[t.lower()] += 1
     hashtag_stats = []
     for tag, views_list in hashtag_views.items():
         hashtag_stats.append({
@@ -111,47 +107,53 @@ def main():
     parser.add_argument("--max-videos", type=int, default=15)
     parser.add_argument("--csv")
     parser.add_argument("--verify-hashtags-file")
-    parser.add_argument("--suggest-from-file") # Fitur baru
+    parser.add_argument("--suggest-from-file")
     
     args = parser.parse_args()
     api_key = args.api_key or os.environ.get("YT_API_KEY")
-
     os.makedirs("results", exist_ok=True)
 
     # 1. Fitur Autocomplete
     if args.suggest_from_file and os.path.exists(args.suggest_from_file):
         with open(args.suggest_from_file, "r", encoding="utf-8") as f:
-            seeds = [line.strip() for line in f if line.strip()]
+            raw_content = f.read()
+            # Split berdasarkan koma atau baris baru
+            seeds = [s.strip() for s in raw_content.replace('\n', ',').split(',') if s.strip()]
         all_suggestions = []
         for seed in seeds:
             print(f"[*] Mencari saran pencarian untuk: '{seed}'")
             all_suggestions.extend(get_autocomplete_suggestions(seed))
-        
         with open("results/autocomplete_suggestions.txt", "w", encoding="utf-8") as f:
             for item in sorted(set(all_suggestions)):
                 f.write(f"{item}\n")
         print("[✓] Saran pencarian disimpan ke: results/autocomplete_suggestions.txt")
 
-    # 2. Proses Keyword (Analisis Hashtag)
-    target_keywords = args.keywords or []
+    # 2. Proses Keyword (dengan dukungan koma)
+    target_keywords = []
+    if args.keywords:
+        raw_keywords = " ".join(args.keywords)
+        target_keywords = [k.strip() for k in raw_keywords.split(',') if k.strip()]
+    
     if args.keywords_file and os.path.exists(args.keywords_file):
         with open(args.keywords_file, "r", encoding="utf-8") as f:
-            target_keywords += [line.strip() for line in f if line.strip()]
+            raw_lines = f.read()
+            target_keywords += [k.strip() for k in raw_lines.replace('\n', ',').split(',') if k.strip()]
 
     if target_keywords and api_key:
-        for kw in target_keywords:
+        for kw in set(target_keywords): # set() untuk menghindari duplikat
             data = analyze_keyword(kw, api_key, max_results=args.max_videos)
-            output_file = args.csv if args.csv else f"results/analysis_{kw.replace(' ', '_')}.csv"
+            output_file = f"results/analysis_{kw.replace(' ', '_')}.csv"
             with open(output_file, "w", encoding="utf-8", newline="") as f:
                 writer = csv.DictWriter(f, fieldnames=["hashtag", "video_count", "avg_views", "total_views", "max_views"])
                 writer.writeheader()
                 writer.writerows(data["hashtag_stats"])
             print(f"[✓] Hasil keyword disimpan ke: {output_file}")
 
-    # 3. Proses Hashtag Verifikasi
+    # 3. Proses Hashtag Verifikasi (dengan dukungan koma)
     if args.verify_hashtags_file and os.path.exists(args.verify_hashtags_file) and api_key:
         with open(args.verify_hashtags_file, "r", encoding="utf-8") as f:
-            target_hashtags = [line.strip() for line in f if line.strip()]
+            raw_lines = f.read()
+            target_hashtags = [h.strip() for h in raw_lines.replace('\n', ',').split(',') if h.strip()]
         verified = verify_specific_hashtags(target_hashtags, api_key)
         with open("results/verified_hashtags.csv", "w", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=["hashtag", "estimated_reach_score"])
