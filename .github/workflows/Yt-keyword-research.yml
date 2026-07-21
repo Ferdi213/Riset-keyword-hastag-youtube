@@ -2,10 +2,10 @@ name: Riset Keyword & Hashtag YouTube
 
 # Kapan workflow ini jalan:
 on:
-#  schedule:
-    # Tiap Senin jam 07:00 WIB (00:00 UTC). Format cron: menit jam tanggal bulan hari
-    #- cron: "0 0 * * 1"
-  workflow_dispatch: # ini yang bikin muncul tombol "Run workflow" manual di tab Actions
+  #schedule:
+    # Tiap Senin jam 07:00 WIB (00:00 UTC).
+   # - cron: "0 0 * * 1"
+  workflow_dispatch: # Agar muncul tombol "Run workflow" manual
 
 # Wajib ada permission ini supaya workflow boleh commit & push hasil balik ke repo
 permissions:
@@ -23,11 +23,18 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Jalankan riset keyword (mode gratis + trending)
+      - name: Jalankan pencarian saran kata kunci (Autocomplete)
         env:
           YT_API_KEY: ${{ secrets.YT_API_KEY }}
         run: |
           mkdir -p results
+          python scripts/yt_keyword_hashtag_finder.py \
+            --suggest-from-file config/seed_keywords.txt
+
+      - name: Jalankan riset keyword (mode gratis + trending)
+        env:
+          YT_API_KEY: ${{ secrets.YT_API_KEY }}
+        run: |
           python scripts/yt_keyword_hashtag_finder.py \
             --keywords-file config/keywords.txt \
             --api-key "$YT_API_KEY" \
@@ -47,6 +54,9 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Pastikan folder results dilacak oleh git
           git add results/
+          # Cek apakah ada perubahan (file baru atau file berubah)
           git diff --cached --quiet && echo "Tidak ada perubahan hasil, skip commit." || \
             (git commit -m "Update hasil riset keyword & hashtag $(date +%Y-%m-%d)" && git push)
+            
