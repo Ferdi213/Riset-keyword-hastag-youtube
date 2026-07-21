@@ -2,9 +2,9 @@ name: Riset Keyword & Hashtag YouTube
 
 # Kapan workflow ini jalan:
 on:
-  schedule:
+#  schedule:
     # Tiap Senin jam 07:00 WIB (00:00 UTC). Format cron: menit jam tanggal bulan hari
-    - cron: "0 0 * * 1"
+    #- cron: "0 0 * * 1"
   workflow_dispatch: # ini yang bikin muncul tombol "Run workflow" manual di tab Actions
 
 # Wajib ada permission ini supaya workflow boleh commit & push hasil balik ke repo
