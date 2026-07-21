@@ -25,20 +25,6 @@ def get_autocomplete_suggestions(seed_keyword: str, hl: str = "id", gl: str = "I
         print(f"  [!] Gagal ambil suggestion untuk '{seed_keyword}': {e}", file=sys.stderr)
         return []
 
-def expand_keywords(seed_keywords: list, deep: bool = False) -> list:
-    all_suggestions = set()
-    for seed in seed_keywords:
-        print(f"[*] Mencari suggestion untuk: '{seed}'")
-        base = get_autocomplete_suggestions(seed)
-        all_suggestions.update(base)
-        if deep:
-            for letter in "abcdefghijklmnopqrstuvwxyz":
-                variant = f"{seed} {letter}"
-                suggestions = get_autocomplete_suggestions(variant)
-                all_suggestions.update(suggestions)
-                time.sleep(0.15)
-    return sorted(all_suggestions)
-
 def youtube_api_get(endpoint: str, params: dict, api_key: str) -> dict:
     params["key"] = api_key
     url = f"https://www.googleapis.com/youtube/v3/{endpoint}?" + urllib.parse.urlencode(params)
@@ -108,39 +94,59 @@ def analyze_keyword(keyword: str, api_key: str, max_results: int = 15) -> dict:
         "hashtag_stats": hashtag_stats, "top_hidden_tags": tag_counter.most_common(20)
     }
 
+def verify_specific_hashtags(hashtags: list, api_key: str) -> list:
+    results = []
+    for ht in hashtags:
+        clean_ht = ht.replace("#", "")
+        print(f"[*] Memverifikasi hashtag: #{clean_ht}")
+        try:
+            data = youtube_api_get("search", {"part": "snippet", "q": f"#{clean_ht}", "type": "video", "maxResults": 5}, api_key)
+            results.append({"hashtag": f"#{clean_ht}", "estimated_reach_score": data.get("pageInfo", {}).get("totalResults", 0)})
+        except Exception as e:
+            print(f"  [!] Gagal: {e}", file=sys.stderr)
+        time.sleep(0.2)
+    return results
+
 def main():
     parser = argparse.ArgumentParser(description="YouTube Keyword & Hashtag Finder")
     parser.add_argument("--keywords", nargs="+")
     parser.add_argument("--api-key")
-    parser.add_argument("--deep", action="store_true")
-    # Argumen tambahan yang Anda inginkan
     parser.add_argument("--keywords-file")
     parser.add_argument("--max-videos", type=int, default=15)
     parser.add_argument("--csv")
+    parser.add_argument("--verify-hashtags-file")
     
     args = parser.parse_args()
     api_key = args.api_key or os.environ.get("YT_API_KEY")
 
-    # Ambil keyword (prioritas dari CLI, lalu file)
+    os.makedirs("results", exist_ok=True)
+
+    # Proses Keyword
     target_keywords = args.keywords or []
     if args.keywords_file and os.path.exists(args.keywords_file):
         with open(args.keywords_file, "r", encoding="utf-8") as f:
             target_keywords += [line.strip() for line in f if line.strip()]
 
-    os.makedirs("results", exist_ok=True)
-    
     if target_keywords and api_key:
         for kw in target_keywords:
             data = analyze_keyword(kw, api_key, max_results=args.max_videos)
-            # Simpan ke file CSV sesuai argumen --csv
             output_file = args.csv if args.csv else f"results/analysis_{kw.replace(' ', '_')}.csv"
             with open(output_file, "w", encoding="utf-8", newline="") as f:
                 writer = csv.DictWriter(f, fieldnames=["hashtag", "video_count", "avg_views", "total_views", "max_views"])
                 writer.writeheader()
                 writer.writerows(data["hashtag_stats"])
-            print(f"[✓] Hasil disimpan ke: {output_file}")
-    else:
-        print("[!] Mohon berikan --keywords atau --keywords-file serta --api-key.")
+            print(f"[✓] Hasil keyword disimpan ke: {output_file}")
+
+    # Proses Hashtag Verifikasi
+    if args.verify_hashtags_file and os.path.exists(args.verify_hashtags_file) and api_key:
+        with open(args.verify_hashtags_file, "r", encoding="utf-8") as f:
+            target_hashtags = [line.strip() for line in f if line.strip()]
+        verified = verify_specific_hashtags(target_hashtags, api_key)
+        with open("results/verified_hashtags.csv", "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["hashtag", "estimated_reach_score"])
+            writer.writeheader()
+            writer.writerows(verified)
+        print("[✓] Hasil verifikasi hashtag disimpan ke: results/verified_hashtags.csv")
 
 if __name__ == "__main__":
     main()
