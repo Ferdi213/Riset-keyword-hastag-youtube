@@ -6,6 +6,10 @@ lihat hashtag & tag tersembunyi yang beneran dipakai video-video top di niche ka
 Cuma pakai library bawaan Python (tidak perlu `pip install` apapun) — tinggal
 jalankan dengan Python 3.
 
+  file config/seed_keyword.text : untuk cari kata kunci di kolom pencarian 
+
+
+  
 ## Cara Pakai
 
 ### Mode 1 — Gratis, tanpa API key (keyword suggestion doang)
