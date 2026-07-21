@@ -38,7 +38,7 @@ jobs:
           python scripts/yt_keyword_hashtag_finder.py \
             --keywords-file config/keywords.txt \
             --api-key "$YT_API_KEY" \
-            --max-videos 15 \
+            --max-videos 50 \
             --csv "results/keyword-report-$(date +%Y-%m-%d).csv"
 
       - name: Jalankan verifikasi hashtag
